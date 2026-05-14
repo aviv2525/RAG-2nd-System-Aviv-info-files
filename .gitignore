@@ -1,0 +1,35 @@
+# Secrets
+.env
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Documents — personal data, not for repo
+# Keep the folder itself via .gitkeep
+data/*
+!data/.gitkeep
+
+# FAISS index files (if saved to disk in the future)
+*.faiss
+*.index
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Flask / Python build artifacts
+instance/
+dist/
+build/
+*.egg-info/

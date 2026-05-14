@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ask About Aviv</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Ask About Aviv</h1>
+      <p>Powered by Gemini · HuggingFace · FAISS</p>
+    </header>
+
+    {% if error %}
+    <div class="card">
+      <p class="not-ready">⚠ Startup error: {{ error }}</p>
+    </div>
+    {% elif not ready %}
+    <div class="card">
+      <p class="not-ready">Loading RAG system, please refresh in a moment...</p>
+    </div>
+    {% else %}
+
+    <div class="card">
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+        <p>Attach a document &mdash; <span>click or drag a .txt / .pdf file</span></p>
+        <input type="file" id="fileInput" accept=".txt,.pdf" />
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
+      <textarea
+        id="question"
+        placeholder="Ask me anything about Aviv... / שאל אותי על אביב..."
+        autofocus
+      ></textarea>
+      <button class="btn-ask" id="askBtn" onclick="askQuestion()">Ask</button>
+    </div>
+
+    <div class="spinner" id="spinner"></div>
+    <div class="error-banner" id="errorBanner"></div>
+
+    <div class="card answer-section" id="answerSection">
+      <div class="answer-label">Answer</div>
+      <div class="answer-text" id="answerText" dir="auto"></div>
+      <button class="context-toggle" id="contextToggle" onclick="toggleContext()">
+        Show sources
+      </button>
+      <ol class="context-list" id="contextList"></ol>
+    </div>
+
+    <div id="historySection" class="history-section" style="display:none;">
+      <div class="history-label">Previous questions</div>
+      <div id="historyItems"></div>
+    </div>
+
+    {% endif %}
+  </div>
+
+  <script>
+    const history = [];
+
+    async function askQuestion() {
+      const input = document.getElementById('question');
+      const question = input.value.trim();
+      if (!question) return;
+
+      const btn = document.getElementById('askBtn');
+      const spinner = document.getElementById('spinner');
+      const errorBanner = document.getElementById('errorBanner');
+      const answerSection = document.getElementById('answerSection');
+
+      btn.disabled = true;
+      spinner.classList.add('visible');
+      answerSection.classList.remove('visible');
+      errorBanner.classList.remove('visible');
+      document.getElementById('contextList').classList.remove('visible');
+      document.getElementById('contextToggle').textContent = 'Show sources';
+
+      try {
+        const res = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorBanner.textContent = data.error || 'Something went wrong.';
+          errorBanner.classList.add('visible');
+          return;
+        }
+
+        // Show current answer
+        document.getElementById('answerText').textContent = data.answer;
+        const list = document.getElementById('contextList');
+        list.innerHTML = '';
+        (data.chunks || []).forEach(chunk => {
+          const li = document.createElement('li');
+          li.textContent = chunk;
+          list.appendChild(li);
+        });
+        answerSection.classList.add('visible');
+
+        // Save to history
+        if (history.length > 0) {
+          addToHistory(history[history.length - 1]);
+        }
+        history.push({ question, answer: data.answer });
+
+        input.value = '';
+        input.focus();
+
+      } catch (err) {
+        errorBanner.textContent = 'Network error. Is the server running?';
+        errorBanner.classList.add('visible');
+      } finally {
+        spinner.classList.remove('visible');
+        btn.disabled = false;
+      }
+    }
+
+    function toggleContext() {
+      const list = document.getElementById('contextList');
+      const btn = document.getElementById('contextToggle');
+      const visible = list.classList.toggle('visible');
+      btn.textContent = visible ? 'Hide sources' : 'Show sources';
+    }
+
+    function addToHistory(entry) {
+      const section = document.getElementById('historySection');
+      const container = document.getElementById('historyItems');
+      section.style.display = 'block';
+
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.innerHTML = `
+        <div class="history-question" dir="auto">${escapeHtml(entry.question)}</div>
+        <div class="history-answer" dir="auto">${escapeHtml(entry.answer)}</div>
+      `;
+      container.prepend(item);
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    document.getElementById('question').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        askQuestion();
+      }
+    });
+
+    // File upload
+    const fileInput = document.getElementById('fileInput');
+    const uploadArea = document.getElementById('uploadArea');
+    const uploadStatus = document.getElementById('uploadStatus');
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+    });
+
+    uploadArea.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) uploadFile(file);
+    });
+
+    async function uploadFile(file) {
+      if (!file.name.endsWith('.txt') && !file.name.endsWith('.pdf')) {
+        setUploadStatus('Only .txt and .pdf files are supported.', 'error');
+        return;
+      }
+      setUploadStatus('Uploading...', '');
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        const res = await fetch('/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          setUploadStatus(data.error || 'Upload failed.', 'error');
+        } else {
+          setUploadStatus(data.message, 'success');
+          fileInput.value = '';
+        }
+      } catch {
+        setUploadStatus('Network error during upload.', 'error');
+      }
+    }
+
+    function setUploadStatus(msg, cls) {
+      uploadStatus.textContent = msg;
+      uploadStatus.className = 'upload-status ' + cls;
+    }
+  </script>
+</body>
+</html>
