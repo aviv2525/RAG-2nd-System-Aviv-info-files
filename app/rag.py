@@ -4,11 +4,13 @@ import faiss
 import numpy as np
 import nltk
 from dotenv import load_dotenv
+from pathlib import Path
 
 from google import genai
 from google.genai import types
 from huggingface_hub import InferenceClient
 from nltk.tokenize import sent_tokenize
+from numpy.char import index
 
 load_dotenv()
 
@@ -233,13 +235,62 @@ def embed_query_with_huggingface(query):
 # ==========================================================
 # FAISS VECTOR SEARCH
 # ==========================================================
+# ==========================================================
+# FAISS VECTOR SEARCH
+# ==========================================================
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+DATA_FOLDER = BASE_DIR / "data"
+
+VECTOR_STORE_DIR = BASE_DIR / "vector_store"
+FAISS_INDEX_PATH = VECTOR_STORE_DIR / "faiss.index"
+CHUNKS_PATH = VECTOR_STORE_DIR / "chunks.npy"
+EMBEDDINGS_PATH = VECTOR_STORE_DIR / "embeddings.npy"
+
+
+def save_vector_store(index, embeddings, chunks):
+    """
+    Save FAISS index + embeddings + chunks to disk.
+    """
+
+    VECTOR_STORE_DIR.mkdir(exist_ok=True)
+    faiss.write_index(index, str(FAISS_INDEX_PATH))
+
+    np.save(EMBEDDINGS_PATH, embeddings)
+
+    np.save(CHUNKS_PATH, np.array(chunks, dtype=object))
+
+    print("Vector store saved to disk.")
+
+
+def load_vector_store():
+    print("BASE_DIR:", BASE_DIR)
+    print("VECTOR_STORE_DIR:", VECTOR_STORE_DIR)
+    print("FAISS_INDEX_PATH:", FAISS_INDEX_PATH)
+    print("FAISS EXISTS:", FAISS_INDEX_PATH.exists())
+    """
+    Load FAISS index + embeddings + chunks from disk.
+    """
+
+    if not FAISS_INDEX_PATH.exists():
+        return None, None, None
+
+    index = faiss.read_index(str(FAISS_INDEX_PATH))
+
+    embeddings = np.load(EMBEDDINGS_PATH)
+
+    chunks = np.load(CHUNKS_PATH, allow_pickle=True).tolist()
+
+    print("Vector store loaded from disk.")
+
+    return index, embeddings, chunks
+
 
 def create_faiss_index(embeddings):
     """
     Creates FAISS index.
-
-    We normalize vectors and use inner product.
-    This behaves like cosine similarity.
     """
 
     faiss.normalize_L2(embeddings)
@@ -247,6 +298,7 @@ def create_faiss_index(embeddings):
     dimension = embeddings.shape[1]
 
     index = faiss.IndexFlatIP(dimension)
+
     index.add(embeddings)
 
     print(f"FAISS index created with {index.ntotal} vectors.")
@@ -256,30 +308,20 @@ def create_faiss_index(embeddings):
 
 def retrieve(query, index, chunks, k=TOP_K):
     """
-    Embeds the user question with Hugging Face and searches FAISS.
+    Embeds the query and retrieves the top-k most relevant chunks from the FAISS index.
     """
 
     query_embedding = embed_query_with_huggingface(query)
-
     faiss.normalize_L2(query_embedding)
 
-    scores, indexes = index.search(query_embedding, k)
+    distances, indices = index.search(query_embedding, k)
 
-    print("\nFAISS scores:", scores)
-    print("FAISS indexes:", indexes)
-
-    retrieved_chunks = []
-
-    for idx in indexes[0]:
-        if idx != -1:
-            retrieved_chunks.append(chunks[idx])
-
-    return retrieved_chunks
-
+    return [chunks[i] for i in indices[0] if i < len(chunks)]
 
 # ==========================================================
 # GEMINI LLM
 # ==========================================================
+
 
 def ask_gemini(context, question):
     """
@@ -349,14 +391,26 @@ Answer:
 def main():
     setup_nltk()
 
-    print("Loading documents...")
-    chunks = load_documents(DATA_FOLDER)
+    print("Checking for existing vector store...")
 
-    print("\nCreating Hugging Face cloud embeddings...")
-    document_embeddings = embed_texts_with_huggingface(chunks)
+    index, embeddings, chunks = load_vector_store()
 
-    print("\nCreating FAISS index...")
-    index = create_faiss_index(document_embeddings)
+    if index is None:
+        print("No existing vector store found.")
+
+        print("Loading documents...")
+        chunks = load_documents(DATA_FOLDER)
+
+        print("\nCreating Hugging Face cloud embeddings...")
+        embeddings = embed_texts_with_huggingface(chunks)
+
+        print("\nCreating FAISS index...")
+        index = create_faiss_index(embeddings)
+
+        save_vector_store(index, embeddings, chunks)
+
+    else:
+        print("Using cached vector store.")
 
     print("\nRAG system is ready.")
     print("Embeddings: Hugging Face cloud")

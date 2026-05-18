@@ -6,7 +6,9 @@ from werkzeug.utils import secure_filename
 from nltk.tokenize import sent_tokenize
 from pypdf import PdfReader
 
-from Rag import (
+from app.rag import (
+    save_vector_store,
+    load_vector_store,
     setup_nltk,
     load_documents,
     embed_texts_with_huggingface,
@@ -27,14 +29,33 @@ startup_error = None
 
 def initialize_rag():
     global chunks, index, ready, startup_error
+
     try:
         setup_nltk()
-        chunks = load_documents(DATA_FOLDER)
-        embeddings = embed_texts_with_huggingface(chunks)
-        index = create_faiss_index(embeddings)
+
+        print("Checking for existing vector store...")
+
+        index, embeddings, chunks = load_vector_store()
+
+        if index is None:
+            print("No vector store found. Building new one...")
+
+            chunks = load_documents(DATA_FOLDER)
+
+            embeddings = embed_texts_with_huggingface(chunks)
+
+            index = create_faiss_index(embeddings)
+
+            save_vector_store(index, embeddings, chunks)
+
+        else:
+            print("Using cached vector store.")
+
         ready = True
+
     except Exception as e:
         startup_error = str(e)
+        print("RAG startup failed:", e)
 
 
 @app.route("/")
@@ -86,7 +107,8 @@ def upload():
     try:
         if ext == ".pdf":
             reader = PdfReader(filepath)
-            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            text = "\n".join(page.extract_text()
+                             or "" for page in reader.pages)
         else:
             text = open(filepath, encoding="utf-8").read()
     except Exception as e:
@@ -101,10 +123,11 @@ def upload():
     faiss.normalize_L2(new_embeddings)
     index.add(new_embeddings)
     chunks.extend(new_chunks)
+    save_vector_store(index, new_embeddings, chunks)
 
     return jsonify({"message": f"Added {len(new_chunks)} chunks from '{filename}'.", "count": len(new_chunks)})
 
 
 if __name__ == "__main__":
     initialize_rag()
-    app.run(debug=False, port=5000)
+    app.run(debug=True, port=5000)

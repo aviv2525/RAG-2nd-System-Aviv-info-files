@@ -15,6 +15,7 @@ __pycache__/
 # Keep the folder itself via .gitkeep
 data/*
 !data/.gitkeep
+vector_store/
 
 # FAISS index files (if saved to disk in the future)
 *.faiss

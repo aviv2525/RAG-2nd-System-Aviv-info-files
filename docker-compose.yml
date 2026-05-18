@@ -1,0 +1,16 @@
+services:
+  rag-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./data:/app/data
+      - ./vector_store:/app/vector_store
+
+    stdin_open: true
+    tty: true
